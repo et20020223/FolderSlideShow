@@ -17,9 +17,12 @@ namespace FolderSlideShow
         private readonly PictureBox photo = new PictureBox();
         private readonly Label heading = new Label(), detail = new Label(), message = new Label(), progress = new Label();
         private readonly FlowLayoutPanel actions = new FlowLayoutPanel(), settings = new FlowLayoutPanel();
-        private readonly Button pauseButton, shuffleButton, loopButton, muteButton, fullscreenButton;
+        private readonly PlayerButton pauseButton, shuffleButton, loopButton, muteButton, fullscreenButton;
         private readonly ComboBox interval = new ComboBox();
-        private readonly TrackBar volume = new TrackBar(), seek = new TrackBar();
+        private readonly PlayerSlider volume = new PlayerSlider(), seek = new PlayerSlider();
+        private readonly Panel seekRow = new Panel();
+        private readonly ToolTip tips = new ToolTip();
+        private MediaClickInput mediaClicks;
         private readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
         private readonly Stopwatch elapsed = new Stopwatch(), chromeClock = Stopwatch.StartNew();
         private long topLastHover = -1000, bottomLastHover = -1000;
@@ -35,7 +38,7 @@ namespace FolderSlideShow
         private int seconds = 5, sound = 70, scanGeneration;
         private Rectangle normalBounds;
         private FormWindowState normalState;
-        private readonly Color panelColor = Color.FromArgb(24, 28, 34), accent = Color.FromArgb(86, 218, 185);
+        private readonly Color panelColor = Color.FromArgb(17, 22, 30), accent = Color.FromArgb(103, 229, 197);
 
         public PlayerForm(string folder, bool windowed, string tracePath)
         {
@@ -43,16 +46,17 @@ namespace FolderSlideShow
             ReadSettings();
             Text = "資料夾隨機放映"; BackColor = Color.Black; ForeColor = Color.White;
             SuspendLayout();
-            Font = new Font("Microsoft JhengHei UI", 11);
+            Font = new Font("Microsoft JhengHei UI", 10);
             StartPosition = FormStartPosition.CenterScreen; ClientSize = new Size(1200, 740);
             MinimumSize = new Size(1060, 550); KeyPreview = true;
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-            heading.Height = 38; heading.Padding = new Padding(18, 6, 18, 0);
-            heading.Font = new Font(Font, FontStyle.Bold); heading.BackColor = panelColor;
+            heading.Height = 46; heading.Padding = new Padding(28, 8, 28, 0);
+            heading.Font = new Font(Font.FontFamily, 13, FontStyle.Bold); heading.BackColor = panelColor;
             heading.AutoEllipsis = true; heading.TextAlign = ContentAlignment.MiddleLeft;
-            detail.Height = 30; detail.Padding = new Padding(18, 0, 18, 3);
-            detail.BackColor = panelColor; detail.ForeColor = Color.Silver; detail.AutoEllipsis = true;
-            bottom.Height = 148; bottom.BackColor = panelColor;
+            detail.Height = 32; detail.Padding = new Padding(28, 1, 28, 8);
+            detail.BackColor = panelColor; detail.ForeColor = Color.FromArgb(145, 161, 178); detail.AutoEllipsis = true;
+            bottom.Height = 152; bottom.BackColor = panelColor;
+            bottom.Paint += delegate(object sender, PaintEventArgs e) { using (Pen border = new Pen(Color.FromArgb(43, 54, 66))) e.Graphics.DrawLine(border, 0, 0, bottom.Width, 0); };
             stage.BackColor = Color.Black;
             video.Dock = DockStyle.Fill; video.BackColor = Color.Black;
             photo.Dock = DockStyle.Fill; photo.SizeMode = PictureBoxSizeMode.Zoom; photo.BackColor = Color.Black;
@@ -63,27 +67,30 @@ namespace FolderSlideShow
             seek.AccessibleName = "播放進度"; volume.AccessibleName = "音量"; interval.AccessibleName = "照片間隔";
             stage.Controls.Add(video); stage.Controls.Add(photo); stage.Controls.Add(message);
             Controls.Add(stage); Controls.Add(bottom); Controls.Add(detail); Controls.Add(heading);
-            actions.Dock = DockStyle.Top; actions.Height = 48; actions.Padding = new Padding(12, 6, 0, 0); actions.WrapContents = false;
-            settings.Dock = DockStyle.Top; settings.Height = 45; settings.Padding = new Padding(12, 3, 0, 0); settings.WrapContents = false;
-            Panel seekRow = new Panel { Dock = DockStyle.Top, Height = 48 };
-            progress.Dock = DockStyle.Right; progress.Width = 165; progress.TextAlign = ContentAlignment.MiddleCenter; progress.ForeColor = Color.Silver;
-            seek.Dock = DockStyle.Fill; seek.Minimum = 0; seek.Maximum = 1000; seek.TickStyle = TickStyle.None;
+            actions.Height = 48; actions.WrapContents = false;
+            settings.Height = 36; settings.WrapContents = false;
+            seekRow.Height = 30;
+            progress.Dock = DockStyle.Right; progress.Width = 150; progress.TextAlign = ContentAlignment.MiddleRight; progress.ForeColor = Color.FromArgb(164, 184, 199);
+            seek.Dock = DockStyle.Fill; seek.Minimum = 0; seek.Maximum = 1000;
             seek.BackColor = panelColor; seek.TabStop = false;
             seek.MouseDown += delegate { dragging = true; };
             seek.MouseUp += delegate { if (isVideo && vlc != null && vlc.Length > 0) vlc.Seek(vlc.Length * seek.Value / 1000); dragging = false; Focus(); };
             seekRow.Controls.Add(seek); seekRow.Controls.Add(progress);
             bottom.Controls.Add(seekRow); bottom.Controls.Add(settings); bottom.Controls.Add(actions);
-            AddButton(actions, "上個  ←", delegate { Previous(); }, 95);
-            pauseButton = AddButton(actions, "暫停  ␣", delegate { TogglePause(); }, 98);
-            AddButton(actions, "下個  →", delegate { Next(); }, 95);
+            AddButton(actions, "←  上一個", delegate { Previous(); }, 104);
+            pauseButton = AddButton(actions, "暫停", delegate { TogglePause(); }, 118); pauseButton.Primary = true;
+            tips.SetToolTip(pauseButton, "空白鍵：暫停／繼續");
+            AddButton(actions, "下一個  →", delegate { Next(); }, 104);
             shuffleButton = AddButton(actions, "", delegate { shuffled = !shuffled; if (order != null) order.SetShuffle(shuffled); UpdateButtons(); SaveSettings(); }, 112);
             loopButton = AddButton(actions, "", delegate { looping = !looping; if (order != null) order.Loop = looping; UpdateButtons(); SaveSettings(); }, 112);
             AddButton(actions, "選擇資料夾", delegate { PickFolder(); }, 115);
             fullscreenButton = AddButton(actions, "全螢幕 F11", delegate { ToggleFullscreen(); }, 120);
-            AddButton(actions, "結束 Esc", delegate { Close(); }, 100);
+            AddButton(actions, "結束  Esc", delegate { Close(); }, 100);
             Label caption = new Label { Text = "照片間隔", AutoSize = false, Width = 76, Height = 32, TextAlign = ContentAlignment.MiddleLeft };
             settings.Controls.Add(caption);
             interval.DropDownStyle = ComboBoxStyle.DropDownList; interval.Width = 90;
+            interval.FlatStyle = FlatStyle.Flat; interval.BackColor = Color.FromArgb(31, 37, 47); interval.ForeColor = Color.FromArgb(224, 232, 240);
+            interval.Margin = new Padding(0, 4, 14, 0);
             foreach (int n in new int[] { 2, 3, 5, 8, 10, 15, 30, 60 }) interval.Items.Add(n + " 秒");
             int selected = Array.IndexOf(new int[] { 2, 3, 5, 8, 10, 15, 30, 60 }, seconds);
             interval.SelectedIndex = selected < 0 ? 2 : selected;
@@ -91,18 +98,18 @@ namespace FolderSlideShow
             settings.Controls.Add(interval);
             muteButton = AddButton(settings, "", delegate { muted = !muted; ApplyVolume(); }, 100);
             volume.Minimum = 0; volume.Maximum = 100; volume.Value = sound; volume.Width = 120; volume.Height = 32;
-            volume.TickStyle = TickStyle.None; volume.BackColor = panelColor; volume.TabStop = false;
+            volume.BackColor = panelColor; volume.TabStop = false;
             volume.ValueChanged += delegate { sound = volume.Value; if (sound > 0) muted = false; ApplyVolume(); };
             settings.Controls.Add(volume);
-            Label help = new Label { Text = "含所有子資料夾  ·  影片播完自動換下一個  ·  靠近上下邊緣顯示選單", AutoSize = false, Width = 550, Height = 32, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.Silver };
+            Label help = new Label { Text = "單擊畫面換下一個   ·   含子資料夾", AutoSize = false, Width = 350, Height = 32, Padding = new Padding(18, 0, 0, 0), TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.FromArgb(134, 153, 170) };
             settings.Controls.Add(help);
-            photo.DoubleClick += delegate { ToggleFullscreen(); };
-            stage.DoubleClick += delegate { ToggleFullscreen(); };
+            tips.SetToolTip(fullscreenButton, "F11 / F：全螢幕或視窗");
+            tips.SetToolTip(shuffleButton, "S：隨機／依序播放"); tips.SetToolTip(loopButton, "L：開關循環");
             timer.Interval = 100; timer.Tick += Tick; timer.Start();
             FormClosed += delegate
             {
                 timer.Stop(); if (scan != null) scan.Cancel(); SaveSettings(); ClearPhoto();
-                if (vlc != null) vlc.Dispose(); timer.Dispose(); Log("closed");
+                if (vlc != null) vlc.Dispose(); timer.Dispose(); tips.Dispose(); Log("closed");
             };
             UpdateButtons();
             Shown += delegate
@@ -116,9 +123,28 @@ namespace FolderSlideShow
             stage.SendToBack(); LayoutChrome();
         }
 
-        private Button AddButton(FlowLayoutPanel parent, string text, Action action, int width)
+        protected override void OnHandleCreated(EventArgs e)
         {
-            Button button = new Button { Text = text, Width = width, Height = 34, FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(43, 49, 58), ForeColor = Color.White, TabStop = false, Margin = new Padding(3, 0, 3, 0) };
+            base.OnHandleCreated(e);
+            mediaClicks = new MediaClickInput(Handle, stage, delegate
+            {
+                if (order != null && !message.Visible && !IsDisposed)
+                    BeginInvoke((Action)delegate { if (!IsDisposed) { Log("surface-click-next"); Next(); Focus(); } });
+            });
+        }
+        protected override void OnHandleDestroyed(EventArgs e)
+        {
+            if (mediaClicks != null) { mediaClicks.Dispose(); mediaClicks = null; }
+            base.OnHandleDestroyed(e);
+        }
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == 0x00FF && mediaClicks != null) mediaClicks.Process(m.LParam);
+            base.WndProc(ref m);
+        }
+        private PlayerButton AddButton(FlowLayoutPanel parent, string text, Action action, int width)
+        {
+            PlayerButton button = new PlayerButton { Text = text, Width = width, Height = parent == settings ? 32 : 40, FlatStyle = FlatStyle.Flat, BackColor = panelColor, ForeColor = Color.White, TabStop = false, Margin = new Padding(0, 0, 8, 0) };
             button.FlatAppearance.BorderSize = 0;
             button.Click += delegate { ShowControls(); action(); Focus(); };
             parent.Controls.Add(button); return button;
@@ -283,17 +309,24 @@ namespace FolderSlideShow
         }
         private void UpdateButtons()
         {
-            pauseButton.Text = paused ? "播放  ␣" : "暫停  ␣";
-            shuffleButton.Text = shuffled ? "隨機：開 S" : "隨機：關 S"; shuffleButton.ForeColor = shuffled ? accent : Color.Silver;
-            loopButton.Text = looping ? "循環：開 L" : "循環：關 L"; loopButton.ForeColor = looping ? accent : Color.Silver;
-            muteButton.Text = muted ? "靜音：開 M" : "音量 " + sound; muteButton.ForeColor = muted ? accent : Color.White;
+            pauseButton.Text = paused ? "▶  繼續播放" : "Ⅱ  暫停";
+            shuffleButton.Text = shuffled ? "隨機播放  ·" : "依序播放"; shuffleButton.Selected = shuffled;
+            loopButton.Text = looping ? "循環播放  ·" : "循環已關"; loopButton.Selected = looping;
+            muteButton.Text = muted ? "已靜音" : "音量  " + sound; muteButton.Selected = muted;
             fullscreenButton.Text = full ? "視窗 F11" : "全螢幕 F11";
+            shuffleButton.Invalidate(); loopButton.Invalidate(); muteButton.Invalidate(); pauseButton.Invalidate();
         }
         private void LayoutChrome()
         {
             heading.SetBounds(0, 0, ClientSize.Width, heading.Height);
             detail.SetBounds(0, heading.Height, ClientSize.Width, detail.Height);
             bottom.SetBounds(0, Math.Max(0, ClientSize.Height - bottom.Height), ClientSize.Width, bottom.Height);
+            float scale = AutoScaleDimensions.Width / 96f;
+            int margin = (int)(28 * scale), width = Math.Min(ClientSize.Width - margin * 2, (int)(1040 * scale));
+            int left = (ClientSize.Width - width) / 2;
+            seekRow.SetBounds(left, (int)(8 * scale), width, (int)(30 * scale));
+            actions.SetBounds(left, (int)(44 * scale), width, (int)(48 * scale));
+            settings.SetBounds(left, (int)(102 * scale), width, (int)(36 * scale));
             int topSpace = full ? 0 : heading.Height + detail.Height;
             int bottomSpace = full ? 0 : bottom.Height;
             // Fullscreen controls overlay the media, so revealing them never resizes the picture or video.
