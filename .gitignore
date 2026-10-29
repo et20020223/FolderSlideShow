@@ -1,0 +1,14 @@
+# Local preferences and diagnostics
+settings.ini
+*.log
+context-menu-*.json
+explorer-folders-*.json
+
+# Generated test artifacts (root application binaries are deliberately included)
+tests/*.exe
+tests/*.dll
+tests/測試相簿*/
+tests/WebP 測試*/
+tests/webp-reference/
+tests/Fullscreen*/
+__pycache__/
