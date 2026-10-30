@@ -98,13 +98,15 @@ namespace FolderSlideShow
         [DllImport("user32.dll")] private static extern bool IsChild(IntPtr parent, IntPtr child);
         private readonly Control surface;
         private readonly Action clicked;
+        private readonly Action<Point> contextRequested;
+        private readonly Func<bool> canClick;
         private readonly IntPtr buffer;
         private readonly int headerSize = Marshal.SizeOf(typeof(Header));
-        private bool armed, registered;
-        private Point down;
-        public MediaClickInput(IntPtr window, Control surface, Action clicked)
+        private bool armed, rightArmed, registered;
+        private Point down, rightDown;
+        public MediaClickInput(IntPtr window, Control surface, Action clicked, Action<Point> contextRequested, Func<bool> canClick)
         {
-            this.surface = surface; this.clicked = clicked;
+            this.surface = surface; this.clicked = clicked; this.contextRequested = contextRequested; this.canClick = canClick;
             buffer = Marshal.AllocHGlobal(headerSize + 24);
             registered = RegisterRawInputDevices(new Device[] { new Device { Page = 1, Usage = 2, Target = window } }, 1, (uint)Marshal.SizeOf(typeof(Device)));
         }
@@ -119,13 +121,21 @@ namespace FolderSlideShow
             uint size = (uint)(headerSize + 24);
             if (GetRawInputData(raw, 0x10000003, buffer, ref size, (uint)headerSize) != size || Marshal.ReadInt32(buffer) != 0) return;
             int flags = (ushort)Marshal.ReadInt16(buffer, headerSize + 4);
-            if ((flags & 1) != 0) { down = Cursor.Position; armed = OverSurface(down); }
+            if ((flags & 1) != 0) { down = Cursor.Position; armed = canClick() && OverSurface(down); }
             if ((flags & 2) != 0)
             {
                 Point up = Cursor.Position;
                 bool fire = armed && OverSurface(up) && Math.Abs(up.X - down.X) <= SystemInformation.DragSize.Width && Math.Abs(up.Y - down.Y) <= SystemInformation.DragSize.Height;
                 armed = false;
                 if (fire) clicked();
+            }
+            if ((flags & 4) != 0) { rightDown = Cursor.Position; rightArmed = OverSurface(rightDown); }
+            if ((flags & 8) != 0)
+            {
+                Point up = Cursor.Position;
+                bool fire = rightArmed && OverSurface(up) && Math.Abs(up.X - rightDown.X) <= SystemInformation.DragSize.Width && Math.Abs(up.Y - rightDown.Y) <= SystemInformation.DragSize.Height;
+                rightArmed = false;
+                if (fire) contextRequested(up);
             }
         }
         public void Dispose()

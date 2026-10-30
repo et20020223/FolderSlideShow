@@ -22,6 +22,8 @@ namespace FolderSlideShow
         private readonly PlayerSlider volume = new PlayerSlider(), seek = new PlayerSlider();
         private readonly Panel seekRow = new Panel();
         private readonly ToolTip tips = new ToolTip();
+        private readonly ContextMenuStrip playbackMenu = new ContextMenuStrip();
+        private readonly ToolStripMenuItem fullscreenItem = new ToolStripMenuItem("全螢幕"), windowedItem = new ToolStripMenuItem("視窗");
         private MediaClickInput mediaClicks;
         private readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
         private readonly Stopwatch elapsed = new Stopwatch(), chromeClock = Stopwatch.StartNew();
@@ -105,11 +107,18 @@ namespace FolderSlideShow
             settings.Controls.Add(help);
             tips.SetToolTip(fullscreenButton, "F11 / F：全螢幕或視窗");
             tips.SetToolTip(shuffleButton, "S：隨機／依序播放"); tips.SetToolTip(loopButton, "L：開關循環");
+            playbackMenu.Font = Font; playbackMenu.ShowImageMargin = false; playbackMenu.ShowCheckMargin = true;
+            fullscreenItem.Click += delegate { if (!full) ToggleFullscreen(); };
+            windowedItem.Click += delegate { if (full) ToggleFullscreen(); };
+            playbackMenu.Items.Add(fullscreenItem); playbackMenu.Items.Add(windowedItem);
+            playbackMenu.Items.Add(new ToolStripSeparator());
+            playbackMenu.Items.Add("關閉", null, delegate { Close(); });
+            playbackMenu.Opening += delegate { fullscreenItem.Checked = full; windowedItem.Checked = !full; };
             timer.Interval = 100; timer.Tick += Tick; timer.Start();
             FormClosed += delegate
             {
                 timer.Stop(); if (scan != null) scan.Cancel(); SaveSettings(); ClearPhoto();
-                if (vlc != null) vlc.Dispose(); timer.Dispose(); tips.Dispose(); Log("closed");
+                if (vlc != null) vlc.Dispose(); timer.Dispose(); tips.Dispose(); playbackMenu.Dispose(); Log("closed");
             };
             UpdateButtons();
             Shown += delegate
@@ -130,7 +139,13 @@ namespace FolderSlideShow
             {
                 if (order != null && !message.Visible && !IsDisposed)
                     BeginInvoke((Action)delegate { if (!IsDisposed) { Log("surface-click-next"); Next(); Focus(); } });
-            });
+            }, delegate(Point location)
+            {
+                if (!IsDisposed) BeginInvoke((Action)delegate
+                {
+                    if (!IsDisposed) { Log("surface-context-menu"); playbackMenu.Show(this, PointToClient(location)); }
+                });
+            }, delegate { return !playbackMenu.Visible; });
         }
         protected override void OnHandleDestroyed(EventArgs e)
         {
@@ -419,6 +434,7 @@ namespace FolderSlideShow
         }
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
+            if (playbackMenu.Visible) return base.ProcessCmdKey(ref msg, keyData);
             if (interval.Focused && interval.DroppedDown) return base.ProcessCmdKey(ref msg, keyData);
             switch (keyData)
             {
