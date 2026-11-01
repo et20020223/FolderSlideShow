@@ -1,5 +1,6 @@
 ﻿$ErrorActionPreference = 'Stop'
 $installedExe = Join-Path $env:LOCALAPPDATA 'Programs\FolderSlideShow\FolderSlideShow.exe'
+$classPath = 'Software\Classes\CLSID\{D923A8E6-8B39-4A2C-99F2-DB7BA7446B75}'
 $menuPaths = @('Software\Classes\Directory\shell\FolderSlideShow.Local', 'Software\Classes\Directory\Background\shell\FolderSlideShow.Local', 'Software\Classes\Drive\shell\FolderSlideShow.Local')
 foreach ($menuPath in $menuPaths) {
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("$menuPath\command")
@@ -10,6 +11,13 @@ foreach ($menuPath in $menuPaths) {
     }
     if ($owned) { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($menuPath, $false) }
 }
+$server = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("$classPath\LocalServer32")
+$ownedServer = $false
+if ($null -ne $server) {
+    try { $ownedServer = ([string]$server.GetValue('')).StartsWith('"' + $installedExe + '"', [StringComparison]::OrdinalIgnoreCase) }
+    finally { $server.Dispose() }
+}
+if ($ownedServer) { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($classPath, $false) }
 $shortcutPath = Join-Path ([Environment]::GetFolderPath('Desktop')) '資料夾隨機放映.lnk'
 if (Test-Path -LiteralPath $shortcutPath) {
     $shell = New-Object -ComObject WScript.Shell

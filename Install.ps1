@@ -1,6 +1,8 @@
 ﻿$ErrorActionPreference = 'Stop'
 $destination = Join-Path $env:LOCALAPPDATA 'Programs\FolderSlideShow'
 $exe = Join-Path $destination 'FolderSlideShow.exe'
+$dropClsid = '{D923A8E6-8B39-4A2C-99F2-DB7BA7446B75}'
+$classPath = 'Software\Classes\CLSID\' + $dropClsid
 $menuPaths = @('Software\Classes\Directory\shell\FolderSlideShow.Local', 'Software\Classes\Directory\Background\shell\FolderSlideShow.Local', 'Software\Classes\Drive\shell\FolderSlideShow.Local')
 if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'FolderSlideShow.exe'))) { throw 'Build the application first.' }
 if (-not (Test-Path -LiteralPath 'C:\Program Files\VideoLAN\VLC\libvlc.dll')) { Write-Warning '64-bit VLC is required for video playback. Photos can play without VLC.' }
@@ -12,11 +14,21 @@ foreach ($menuPath in $menuPaths) {
         finally { $existing.Dispose() }
     }
 }
+$existingServer = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("$classPath\LocalServer32")
+if ($null -ne $existingServer) {
+    try { if (-not ([string]$existingServer.GetValue('')).StartsWith('"' + $exe + '"', [StringComparison]::OrdinalIgnoreCase)) { throw 'A different application owns the selection handler. Installation stopped.' } }
+    finally { $existingServer.Dispose() }
+}
 New-Item -ItemType Directory -Path $destination -Force | Out-Null
 foreach ($file in @('FolderSlideShow.exe', 'libsharpyuv.dll', 'libwebp.dll', 'libwebpdemux.dll', 'README.md', 'Uninstall.ps1', 'Uninstall.cmd')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $destination $file) -Force
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'licenses') -Destination $destination -Recurse -Force
+$server = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("$classPath\LocalServer32")
+try {
+    $server.SetValue('', '"' + $exe + '" --shell-server')
+    $server.SetValue('ServerExecutable', $exe)
+} finally { $server.Dispose() }
 foreach ($menuPath in $menuPaths) {
     $placeholder = if ($menuPath.Contains('\Background\')) { '%V' } else { '%1' }
     $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($menuPath)
@@ -25,7 +37,11 @@ foreach ($menuPath in $menuPaths) {
         $key.SetValue('MUIVerb', '隨機放映（含子資料夾）')
         $key.SetValue('Position', 'Top')
         $key.SetValue('Icon', '"' + $exe + '",0')
-        $key.SetValue('MultiSelectModel', 'Single')
+        $key.SetValue('MultiSelectModel', 'Player')
+        if (-not $menuPath.Contains('\Background\')) {
+            $drop = $key.CreateSubKey('DropTarget')
+            try { $drop.SetValue('CLSID', $dropClsid) } finally { $drop.Dispose() }
+        }
         $command = $key.CreateSubKey('command')
         try {
             # The trailing dot avoids the Windows quoted-argument edge case for drive roots ending in a backslash.

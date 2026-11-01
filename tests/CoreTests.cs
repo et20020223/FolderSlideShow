@@ -23,6 +23,29 @@ static class CoreTests
         bool missing = false;
         try { Library.Scan(Path.Combine(root, "missing"), CancellationToken.None); } catch (DirectoryNotFoundException) { missing = true; }
         Check(missing, "missing root reported");
+        string nested = Path.Combine(root, "子資料夾");
+        ScanResult overlap = Library.Scan(new string[] { root, nested, root + "\\.", root.ToUpperInvariant() + "\\" }, CancellationToken.None);
+        Check(overlap.Files.SequenceEqual(scan.Files, StringComparer.OrdinalIgnoreCase), "overlapping parent/child and repeated roots include each path once");
+        Check(overlap.SkippedDirectories == scan.SkippedDirectories, "overlapping roots do not rescan skipped directories");
+        Check(Library.NormalizeRoots(new string[] { root, root + "\\.", root.ToUpperInvariant() + "\\" }).Count == 1, "root spelling variants normalized");
+        Check(Library.NormalizeRoots(new string[] { Path.GetPathRoot(root) })[0] == Path.GetPathRoot(root), "drive root keeps its separator");
+        string extra = Path.Combine(Path.GetTempPath(), "FolderSlideShow-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(extra);
+        try
+        {
+            string sameName = Path.Combine(extra, "01_照片.jpg");
+            File.WriteAllText(sameName, "scan-only fixture");
+            ScanResult multi = Library.Scan(new string[] { root, extra }, CancellationToken.None);
+            Check(multi.Files.Count == scan.Files.Count + 1 && multi.Files.Contains(sameName), "disjoint roots merge and same filenames in different folders remain distinct");
+            Check(multi.Files.SequenceEqual(Library.Scan(new string[] { extra, root }, CancellationToken.None).Files), "root order does not change combined sorted playlist");
+            missing = false;
+            try { Library.Scan(new string[] { root, Path.Combine(extra, "missing") }, CancellationToken.None); } catch (DirectoryNotFoundException) { missing = true; }
+            Check(missing, "missing root in a multi-selection is reported");
+            cancelled = false;
+            try { Library.Scan(new string[] { root, extra }, new CancellationToken(true)); } catch (OperationCanceledException) { cancelled = true; }
+            Check(cancelled, "multi-folder scan cancellation");
+        }
+        finally { File.Delete(Path.Combine(extra, "01_照片.jpg")); Directory.Delete(extra); }
         List<string> files = Enumerable.Range(0, 40).Select(n => "item" + n.ToString("00")).ToList();
         PlayOrder order = new PlayOrder(files, true, new Random(123));
         HashSet<string> round = new HashSet<string>(); List<string> first = new List<string>();

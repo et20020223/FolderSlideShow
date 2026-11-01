@@ -35,14 +35,14 @@ namespace FolderSlideShow
         private WebpImage webp;
         private PlayOrder order;
         private CancellationTokenSource scan;
-        private string root;
+        private List<string> roots = new List<string>();
         private bool paused, isVideo, full, shuffled = true, looping = true, muted, dragging, mediaStarted;
         private int seconds = 5, sound = 70, scanGeneration;
         private Rectangle normalBounds;
         private FormWindowState normalState;
         private readonly Color panelColor = Color.FromArgb(17, 22, 30), accent = Color.FromArgb(103, 229, 197);
 
-        public PlayerForm(string folder, bool windowed, string tracePath)
+        public PlayerForm(string[] folders, bool windowed, string tracePath)
         {
             trace = tracePath;
             ReadSettings();
@@ -55,6 +55,7 @@ namespace FolderSlideShow
             heading.Height = 46; heading.Padding = new Padding(28, 8, 28, 0);
             heading.Font = new Font(Font.FontFamily, 13, FontStyle.Bold); heading.BackColor = panelColor;
             heading.AutoEllipsis = true; heading.TextAlign = ContentAlignment.MiddleLeft;
+            heading.UseMnemonic = false; detail.UseMnemonic = false;
             detail.Height = 32; detail.Padding = new Padding(28, 1, 28, 8);
             detail.BackColor = panelColor; detail.ForeColor = Color.FromArgb(145, 161, 178); detail.AutoEllipsis = true;
             bottom.Height = 152; bottom.BackColor = panelColor;
@@ -124,7 +125,7 @@ namespace FolderSlideShow
             Shown += delegate
             {
                 if (!windowed) ToggleFullscreen();
-                if (!String.IsNullOrEmpty(folder)) LoadFolder(folder); else PickFolder();
+                if (folders.Length > 0) LoadFolders(folders); else PickFolder();
             };
             AutoScaleDimensions = new SizeF(96, 96); AutoScaleMode = AutoScaleMode.Dpi;
             ResumeLayout(true); PerformAutoScale();
@@ -200,35 +201,37 @@ namespace FolderSlideShow
             {
                 dialog.Description = "選擇要放映的資料夾（會包含所有子資料夾的照片和影片）";
                 dialog.ShowNewFolderButton = false;
-                if (root != null) dialog.SelectedPath = root;
-                if (dialog.ShowDialog(this) == DialogResult.OK) LoadFolder(dialog.SelectedPath);
+                if (roots.Count > 0) dialog.SelectedPath = roots[0];
+                if (dialog.ShowDialog(this) == DialogResult.OK) LoadFolders(new string[] { dialog.SelectedPath });
                 else if (order == null) { message.Text = "請點選「選擇資料夾」開始放映\n全螢幕時靠近下緣顯示選單，或按 Ctrl+O"; message.Visible = true; }
                 else SetPaused(wasPaused);
             }
         }
-        private void LoadFolder(string folder)
+        private void LoadFolders(IEnumerable<string> folders)
         {
             if (scan != null) scan.Cancel();
             scan = new CancellationTokenSource(); CancellationToken token = scan.Token;
             int generation = ++scanGeneration;
             if (vlc != null) vlc.Stop(); ClearPhoto(); isVideo = false; order = null;
-            elapsed.Reset(); root = Path.GetFullPath(folder); badFiles.Clear();
+            elapsed.Reset(); roots = Library.NormalizeRoots(folders); badFiles.Clear();
+            string[] selectedRoots = roots.ToArray();
             message.Text = "正在尋找照片和影片…\n包含所有子資料夾"; message.Visible = true; message.BringToFront();
-            heading.Text = "資料夾隨機放映"; detail.Text = folder; ShowControls();
+            Text = roots.Count > 1 ? "資料夾隨機放映 · " + roots.Count + " 個資料夾" : "資料夾隨機放映";
+            heading.Text = Text; detail.Text = String.Join("  ·  ", selectedRoots); ShowControls();
             Task.Factory.StartNew(delegate
             {
                 ScanResult result = null; Exception error = null;
-                try { result = Library.Scan(folder, token); } catch (Exception ex) { error = ex; }
+                try { result = Library.Scan(selectedRoots, token); } catch (Exception ex) { error = ex; }
                 if (token.IsCancellationRequested || IsDisposed || !IsHandleCreated) return;
                 try
                 {
                     BeginInvoke((Action)delegate
                     {
                         if (generation != scanGeneration || IsDisposed) return;
-                        if (error != null) { message.Text = "無法讀取這個資料夾\n" + error.Message; return; }
-                        if (result.Files.Count == 0) { message.Text = "這個資料夾及子資料夾沒有可播放的照片或影片\n支援 JPG、PNG、WebP、GIF、BMP、TIFF，以及 MP4、MOV、MKV 等影片"; return; }
+                        if (error != null) { message.Text = "無法讀取所選資料夾\n" + error.Message; return; }
+                        if (result.Files.Count == 0) { message.Text = "所選資料夾及子資料夾沒有可播放的照片或影片\n支援 JPG、PNG、WebP、GIF、BMP、TIFF，以及 MP4、MOV、MKV 等影片"; return; }
                         order = new PlayOrder(result.Files, shuffled, new Random()); order.Loop = looping;
-                        Log("scan count=" + result.Files.Count + " skipped=" + result.SkippedDirectories);
+                        Log("scan count=" + result.Files.Count + " skipped=" + result.SkippedDirectories + " roots=" + selectedRoots.Length);
                         paused = false; order.Next(); RenderCurrent(); UpdateButtons();
                     });
                 }
@@ -284,7 +287,7 @@ namespace FolderSlideShow
                     if (paused) elapsed.Stop();
                     heading.Text = Path.GetFileName(path);
                     detail.Text = (shuffled ? "隨機" : "依序") + "  ·  " + order.Number + " / " + order.Count + "  ·  " + (isVideo ? "影片" : "照片") + "  ·  " + Relative(path) + (badFiles.Count > 0 ? "  ·  已略過 " + badFiles.Count + " 個無法播放的檔案" : "");
-                    Text = "資料夾隨機放映 — " + Path.GetFileName(path);
+                    Text = "資料夾隨機放映" + (roots.Count > 1 ? " · " + roots.Count + " 個資料夾" : "") + " — " + Path.GetFileName(path);
                     seek.Enabled = isVideo; seek.Value = 0;
                     Log("display " + (isVideo ? "video " : "photo ") + path); UpdateButtons(); return;
                 }
@@ -300,7 +303,8 @@ namespace FolderSlideShow
         }
         private string Relative(string path)
         {
-            string prefix = root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (roots.Count != 1) return path;
+            string prefix = roots[0].TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             return path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? path.Substring(prefix.Length) : path;
         }
         private void Next()

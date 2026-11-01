@@ -20,14 +20,39 @@ namespace FolderSlideShow
 
         public static ScanResult Scan(string root, CancellationToken token)
         {
-            if (!Directory.Exists(root)) throw new DirectoryNotFoundException(root);
+            return Scan(new string[] { root }, token);
+        }
+
+        public static List<string> NormalizeRoots(IEnumerable<string> roots)
+        {
+            List<string> result = new List<string>();
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string root in roots)
+            {
+                string full = Path.GetFullPath(root);
+                if (full.Length > Path.GetPathRoot(full).Length)
+                    full = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (seen.Add(full)) result.Add(full);
+            }
+            return result;
+        }
+
+        public static ScanResult Scan(IEnumerable<string> roots, CancellationToken token)
+        {
             ScanResult result = new ScanResult();
             Stack<string> pending = new Stack<string>();
-            pending.Push(Path.GetFullPath(root));
+            HashSet<string> visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string root in NormalizeRoots(roots))
+            {
+                token.ThrowIfCancellationRequested();
+                if (!Directory.Exists(root)) throw new DirectoryNotFoundException(root);
+                pending.Push(root);
+            }
             while (pending.Count > 0)
             {
                 token.ThrowIfCancellationRequested();
                 string folder = pending.Pop();
+                if (!visited.Add(folder)) continue;
                 try
                 {
                     foreach (string file in Directory.EnumerateFiles(folder))
